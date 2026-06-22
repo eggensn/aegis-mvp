@@ -144,3 +144,52 @@ Record the development history in `session-log.md` reflecting the sessions above
 - Move from an educational/demo-heavy UI to a compact product-like workflow with stepwise progression.
 
 ---
+
+## Session 7 — UI wording and dashboard badges
+
+### User instruction / goal
+Update the case dashboard wording so each case shows a red "Flagged" badge and a secondary "Eligible for consortium check" status; replace internal-risk phrasing with alert source/reason; adjust demo cases per provided details.
+
+### AI/code-agent actions
+- Updated `app.py` to:
+  - Add `alert_source` and `alert_reason` fields for each demo case.
+  - Render a red "Flagged" badge and a secondary "Eligible for consortium check" badge on the case header.
+  - Display "Alert source" and "Alert reason" in case summary and case details.
+  - Keep existing staged workflow and thresholds unchanged.
+  - Add concise stop messages for Stage 1 and Stage 2 failures per case instructions.
+- Ensured privacy rules remain: Stage 1 and Stage 2 do not reveal individual bank identities.
+- Kept the step-by-step active-stage UI with the compact progress tracker.
+
+### Files modified
+- app.py
+- session-log.md (this entry)
+
+### Errors or issues
+- None introduced.
+
+### Human decisions
+- Use "Flagged" (red) and "Eligible for consortium check" (secondary) labels on the dashboard.
+- Keep app title "Aegis Investigator" and compact stepwise workflow.
+
+---
+
+## Session 8 — UI cleanup: badges, icons, and timeline
+
+### User instruction / goal
+Simplify and polish the case dashboard: separate status badges, replace the hourglass icon with an unlocked icon for available stages, and replace the lower workflow-status block with a timestamped case timeline using Amsterdam time.
+
+### AI/code-agent actions
+- Updated `app.py`:
+  - Showed `Flagged` as a red badge and `Eligible for consortium check` as a separate blue badge on the next line.
+  - Replaced the available-stage icon from an hourglass to an unlocked lock (🔓). Kept ✅ for completed and 🔒 for locked.
+  - Added a dynamic "Case timeline · Amsterdam time" that records events when stages are run and displays them in 24-hour Amsterdam time.
+  - Removed the redundant lower workflow-status section and replaced it with the timeline and compact case details.
+  - Ensured timeline events are added for: case flagged, consortium match check completed (and no match when applicable), risk attestation outcomes, and controlled network view opened.
+- Verified logic and privacy constraints remain unchanged.
+
+### Files modified
+- app.py
+- session-log.md (this entry)
+
+### Notes
+- Timeline timestamps are generated dynamically in the Europe/Amsterdam timezone when stage actions are taken.

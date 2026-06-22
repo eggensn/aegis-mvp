@@ -1,4 +1,6 @@
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import streamlit as st
 import pandas as pd
 
@@ -8,7 +10,8 @@ st.set_page_config(page_title="Aegis Investigator", layout="wide")
 SYNTHETIC_ENTITIES = {
     "CUST-1047": {
         "type": "Import/export business",
-        "internal_flag_reason": "Unusual trade payments",
+        "alert_source": "Transaction monitoring",
+        "alert_reason": "Trade payments inconsistent with expected business activity",
         "internal_risk": "High",
         "matching_banks": 3,
         "anonymous_confirmations": 2,
@@ -21,7 +24,8 @@ SYNTHETIC_ENTITIES = {
     },
     "CUST-2198": {
         "type": "Individual customer",
-        "internal_flag_reason": "Rapid incoming and outgoing transfers",
+        "alert_source": "Transaction monitoring",
+        "alert_reason": "Structured deposits followed by outbound transfers",
         "internal_risk": "Medium",
         "matching_banks": 0,
         "anonymous_confirmations": 0,
@@ -32,10 +36,11 @@ SYNTHETIC_ENTITIES = {
     },
     "CUST-3321": {
         "type": "SME",
-        "internal_flag_reason": "Cash-intensive activity",
+        "alert_source": "Behavioural monitoring",
+        "alert_reason": "Dormant account became active with rapid payment flows",
         "internal_risk": "High",
         "matching_banks": 1,
-        "anonymous_confirmations": 1,
+        "anonymous_confirmations": 0,
         "aggregate_risk": "Low",
         "transactions": [
             {"from": "CUST-3321", "to": "ACC-3321-1", "amount": 4000, "note": "cash flow"},
@@ -44,21 +49,38 @@ SYNTHETIC_ENTITIES = {
     },
 }
 
+# --- Helpers: Amsterdam time and timeline management ---
+def now_amsterdam():
+    return datetime.now(ZoneInfo("Europe/Amsterdam"))
+
+def format_time_amsterdam(ts_iso):
+    dt = datetime.fromisoformat(ts_iso)
+    return dt.strftime("%H:%M")
+
 # --- Session state for per-case workflow results ---
 if "results" not in st.session_state:
     st.session_state["results"] = {}
 
 def get_case_state(case_id):
-    # include active_stage to control which stage panel is shown
-    return st.session_state["results"].get(case_id, {
-        "stage1_run": False, "stage1_pass": False,
-        "stage2_run": False, "stage2_pass": False,
-        "stage3_viewed": False,
-        "active_stage": 1
-    })
+    # default state includes initial timeline event (case flagged)
+    if case_id not in st.session_state["results"]:
+        initial = now_amsterdam().isoformat()
+        st.session_state["results"][case_id] = {
+            "stage1_run": False, "stage1_pass": False,
+            "stage2_run": False, "stage2_pass": False,
+            "stage3_viewed": False,
+            "active_stage": 1,
+            "timeline": [{"ts": initial, "text": "Case flagged by Bank Alpha"}]
+        }
+    return st.session_state["results"][case_id]
 
 def save_case_state(case_id, state):
     st.session_state["results"][case_id] = state
+
+def add_timeline_event(case_id, text):
+    state = get_case_state(case_id)
+    state["timeline"].append({"ts": now_amsterdam().isoformat(), "text": text})
+    save_case_state(case_id, state)
 
 # --- Sidebar: case queue ---
 st.sidebar.title("Case queue")
@@ -71,8 +93,8 @@ entity = SYNTHETIC_ENTITIES[selected]
 st.sidebar.markdown("**Case summary**")
 st.sidebar.write(f"- ID: {selected}")
 st.sidebar.write(f"- Type: {entity['type']}")
-st.sidebar.write(f"- Alert: {entity['internal_flag_reason']}")
-st.sidebar.write(f"- Risk: {entity['internal_risk']}")
+st.sidebar.write(f"- Alert source: {entity['alert_source']}")
+st.sidebar.write(f"- Alert reason: {entity['alert_reason']}")
 st.sidebar.markdown("---")
 st.sidebar.caption("Bank Alpha · Investigations interface")
 
@@ -84,21 +106,33 @@ if state["stage1_run"] and (not state["stage1_pass"]) and state.get("active_stag
     state["active_stage"] = 1
 if state["stage2_run"] and (not state["stage2_pass"]) and state.get("active_stage",1) > 2:
     state["active_stage"] = 2
+save_case_state(selected, state)
 
 # --- Main header (product-like) ---
 st.title("Aegis Investigator")
-st.markdown("Investigation workspace · privacy-preserving review")
+st.markdown("Investigation workspace")
+
+# Case header with badges (separate lines)
+badge_flagged = "<div style='margin-bottom:6px'><span style='background:#ffe8e8;color:#a30000;padding:6px 10px;border-radius:12px;font-weight:600'>Flagged</span></div>"
+badge_eligible = "<div><span style='background:#eef2ff;color:#1f4ed8;padding:6px 10px;border-radius:12px'>Eligible for consortium check</span></div>"
 
 st.header(selected)
-st.write(f"- Type: **{entity['type']}**")
-st.write(f"- Bank Alpha alert reason: **{entity['internal_flag_reason']}**")
-st.write(f"- Internal risk level: **{entity['internal_risk']}**")
+col_a, col_b = st.columns([3,1])
+with col_a:
+    st.write(f"- Type: **{entity['type']}**")
+    st.write(f"- Alert source: **{entity['alert_source']}**")
+    st.write(f"- Alert reason: **{entity['alert_reason']}**")
+with col_b:
+    # show badges stacked to avoid wrapping/cutting
+    st.markdown(badge_flagged + badge_eligible, unsafe_allow_html=True)
+
 st.markdown("---")
 
 # --- Compact progress tracker ---
 tracker_col1, tracker_col2, tracker_col3 = st.columns([1,1,1])
 
 def render_stage_label(name, status, active=False):
+    # Icons: ✅ completed, 🔓 available, 🔒 locked, ❌ failed
     if status == "completed":
         icon = "✅"
         bg = "#e6ffed"
@@ -108,7 +142,7 @@ def render_stage_label(name, status, active=False):
         bg = "#fff4e6"
         border = "#d97706"
     elif status == "available":
-        icon = "⏳"
+        icon = "🔓"
         bg = "#eef6ff" if active else "#ffffff"
         border = "#4c9aff" if active else "#e6eef8"
     else:
@@ -156,19 +190,27 @@ def show_stage1():
         st.write(f"- Match count: **{matching}**")
         if state["stage1_pass"]:
             st.success("Match confirmed — escalation available.")
-            st.button("Continue to risk attestation", key="to_stage2", on_click=lambda: goto_stage(2))
+            if st.button("Continue to risk attestation", key="to_stage2"):
+                goto_stage(2)
         else:
-            st.error("No sufficient matches — escalation blocked.")
+            st.error("No consortium match found. Cross-bank escalation is not available for this case.")
     else:
         if st.button("Run match check"):
             with st.spinner("Checking consortium matches..."):
                 time.sleep(0.6)
             passed = matching >= 1
             new_state = get_case_state(selected)
-            new_state.update({"stage1_run": True, "stage1_pass": passed, "stage2_run": False, "stage2_pass": False, "stage3_viewed": False})
-            # keep user on stage 1 after run; they can continue if passed
-            new_state["active_stage"] = 1
+            new_state.update({
+                "stage1_run": True, "stage1_pass": passed,
+                "stage2_run": False, "stage2_pass": False,
+                "stage3_viewed": False,
+                "active_stage": 1
+            })
             save_case_state(selected, new_state)
+            # timeline events
+            add_timeline_event(selected, "Consortium match check completed")
+            if not passed:
+                add_timeline_event(selected, "No consortium match found")
             st.rerun()
 
 def show_stage2():
@@ -183,12 +225,13 @@ def show_stage2():
         confirmations = entity["anonymous_confirmations"]
         risk = entity["aggregate_risk"]
         st.write(f"- Anonymous confirmations: **{confirmations}**")
-        st.write(f"- Aggregate risk: **{risk}**")
+        st.write(f"- Aggregate concern: **{risk}**")
         if state["stage2_pass"]:
-            st.success("Attestation verified — high-risk confirmed.")
-            st.button("Continue to controlled network view", key="to_stage3", on_click=lambda: goto_stage(3))
+            st.success("Attestation verified — high concern confirmed.")
+            if st.button("Continue to controlled network view", key="to_stage3"):
+                goto_stage(3)
         else:
-            st.error("Attestation received but risk not high enough — escalation stopped.")
+            st.error("Consortium presence was found, but anonymous risk attestation was not sufficient for controlled network disclosure.")
     else:
         if st.button("Verify risk attestation"):
             with st.spinner("Verifying attestation..."):
@@ -197,10 +240,13 @@ def show_stage2():
             risk = entity["aggregate_risk"]
             passed2 = (confirmations >= 1) and (risk in ["High", "Critical"])
             new_state = get_case_state(selected)
-            new_state.update({"stage2_run": True, "stage2_pass": passed2})
-            new_state["active_stage"] = 2
-            new_state["stage3_viewed"] = False
+            new_state.update({"stage2_run": True, "stage2_pass": passed2, "active_stage": 2, "stage3_viewed": False})
             save_case_state(selected, new_state)
+            # timeline events
+            if passed2:
+                add_timeline_event(selected, "Risk attestation verified")
+            else:
+                add_timeline_event(selected, "Controlled network view not authorized")
             st.rerun()
 
 def show_stage3():
@@ -221,11 +267,11 @@ def show_stage3():
             new_state["stage3_viewed"] = True
             new_state["active_stage"] = 3
             save_case_state(selected, new_state)
+            add_timeline_event(selected, "Controlled network view opened")
             st.rerun()
 
 def goto_stage(n):
     new_state = get_case_state(selected)
-    # Only allow moving forward to available stages
     if n == 2 and (new_state["stage1_run"] and new_state["stage1_pass"]):
         new_state["active_stage"] = 2
     if n == 3 and (new_state["stage2_run"] and new_state["stage2_pass"]):
@@ -244,19 +290,23 @@ elif active == 3:
 
 st.markdown("---")
 
-# --- Compact status and case details ---
-left, right = st.columns([1,1])
+# --- Case timeline (Amsterdam time) and case details ---
+left, right = st.columns([1.6,1])
 with left:
-    st.markdown("### Workflow status")
-    st.write(f"- Stage 1: **{s1.capitalize()}**")
-    st.write(f"- Stage 2: **{s2.capitalize()}**")
-    st.write(f"- Stage 3: **{s3.capitalize()}**")
+    st.markdown("### Case timeline · Amsterdam time")
+    tl = get_case_state(selected).get("timeline", [])
+    # render timeline entries newest last
+    for ev in tl:
+        t = format_time_amsterdam(ev["ts"])
+        st.write(f"- {t} — {ev['text']}")
 with right:
     st.markdown("### Case details")
     st.write(f"- ID: **{selected}**")
     st.write(f"- Type: **{entity['type']}**")
-    st.write(f"- Alert: **{entity['internal_flag_reason']}**")
-    st.write(f"- Internal risk: **{entity['internal_risk']}**")
+    st.write(f"- Alert source: **{entity['alert_source']}**")
+    st.write(f"- Alert reason: **{entity['alert_reason']}**")
+    st.write(f"- Case status: **Flagged**")
+    st.write(f"- Aegis status: **Eligible for consortium check**")
 
 st.markdown("---")
 st.caption("Prototype environment · No live customer data")
