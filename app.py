@@ -10,8 +10,8 @@ SYNTHETIC_ENTITIES = {
         "type": "Import/export business",
         "internal_flag_reason": "Unusual trade payments",
         "internal_risk": "High",
-        "matching_banks": 3,               # Stage 1: match found at 3 other banks
-        "anonymous_confirmations": 2,     # Stage 2: positive anonymous attestations
+        "matching_banks": 3,
+        "anonymous_confirmations": 2,
         "aggregate_risk": "High",
         "transactions": [
             {"from": "CUST-1047", "to": "Entity A", "amount": 25000, "note": "trade payments"},
@@ -23,7 +23,7 @@ SYNTHETIC_ENTITIES = {
         "type": "Individual customer",
         "internal_flag_reason": "Rapid incoming and outgoing transfers",
         "internal_risk": "Medium",
-        "matching_banks": 0,               # Stage 1: no match -> stops
+        "matching_banks": 0,
         "anonymous_confirmations": 0,
         "aggregate_risk": "Low",
         "transactions": [
@@ -34,8 +34,8 @@ SYNTHETIC_ENTITIES = {
         "type": "SME",
         "internal_flag_reason": "Cash-intensive activity",
         "internal_risk": "High",
-        "matching_banks": 1,               # Stage 1: match at 1 other bank
-        "anonymous_confirmations": 1,      # Stage 2: confirmation but low aggregate risk
+        "matching_banks": 1,
+        "anonymous_confirmations": 1,
         "aggregate_risk": "Low",
         "transactions": [
             {"from": "CUST-3321", "to": "ACC-3321-1", "amount": 4000, "note": "cash flow"},
@@ -49,10 +49,12 @@ if "results" not in st.session_state:
     st.session_state["results"] = {}
 
 def get_case_state(case_id):
+    # include active_stage to control which stage panel is shown
     return st.session_state["results"].get(case_id, {
         "stage1_run": False, "stage1_pass": False,
         "stage2_run": False, "stage2_pass": False,
-        "stage3_viewed": False
+        "stage3_viewed": False,
+        "active_stage": 1
     })
 
 def save_case_state(case_id, state):
@@ -77,6 +79,12 @@ st.sidebar.caption("Bank Alpha · Investigations interface")
 # --- Load case state ---
 state = get_case_state(selected)
 
+# Ensure active_stage is valid given current pass/fail state
+if state["stage1_run"] and (not state["stage1_pass"]) and state.get("active_stage",1) > 1:
+    state["active_stage"] = 1
+if state["stage2_run"] and (not state["stage2_pass"]) and state.get("active_stage",1) > 2:
+    state["active_stage"] = 2
+
 # --- Main header (product-like) ---
 st.title("Aegis Investigator")
 st.markdown("Investigation workspace · privacy-preserving review")
@@ -87,11 +95,10 @@ st.write(f"- Bank Alpha alert reason: **{entity['internal_flag_reason']}**")
 st.write(f"- Internal risk level: **{entity['internal_risk']}**")
 st.markdown("---")
 
-# --- Progress tracker (compact, product-like) ---
-col1, col2, col3 = st.columns([1,1,1])
+# --- Compact progress tracker ---
+tracker_col1, tracker_col2, tracker_col3 = st.columns([1,1,1])
 
-def render_stage(name, status, active=False):
-    # status: "locked", "available", "completed", "failed"
+def render_stage_label(name, status, active=False):
     if status == "completed":
         icon = "✅"
         bg = "#e6ffed"
@@ -109,58 +116,38 @@ def render_stage(name, status, active=False):
         bg = "#f5f7fa"
         border = "#d1d5db"
     html = f"""
-    <div style="padding:10px;border-radius:8px;background:{bg};border:2px solid {border};text-align:center">
-      <div style="font-size:18px">{icon} <strong>{name}</strong></div>
+    <div style="padding:8px;border-radius:6px;background:{bg};border:1.5px solid {border};text-align:center">
+      <div style="font-size:15px">{icon} <strong style="font-size:14px">{name}</strong></div>
     </div>
     """
     return html
 
-# Determine stage statuses using thresholds:
-s1 = "locked"
+# compute statuses
+s1 = "available" if not state["stage1_run"] else ("completed" if state["stage1_pass"] else "failed")
 s2 = "locked"
-s3 = "locked"
-
-# Stage 1 available initially
-if not state["stage1_run"]:
-    s1 = "available"
-else:
-    s1 = "completed" if state["stage1_pass"] else "failed"
-
-# Stage 2 depends on Stage1 pass
 if s1 == "completed":
-    if not state["stage2_run"]:
-        s2 = "available"
-    else:
-        s2 = "completed" if state["stage2_pass"] else "failed"
-else:
-    s2 = "locked"
-
-# Stage 3 depends on Stage2 pass
+    s2 = "available" if not state["stage2_run"] else ("completed" if state["stage2_pass"] else "failed")
+s3 = "locked"
 if s2 == "completed":
-    if not state["stage3_viewed"]:
-        s3 = "available"
-    else:
-        s3 = "completed"
-else:
-    s3 = "locked"
+    s3 = "available" if not state["stage3_viewed"] else "completed"
 
-active_stage = (
-    1 if s1 == "available" else
-    2 if s2 == "available" else
-    3 if s3 == "available" else 0
-)
+active = state.get("active_stage", 1)
+# normalize active to first available if current active is not allowed
+if active == 2 and s2 == "locked":
+    active = 1
+if active == 3 and s3 == "locked":
+    active = 1
+state["active_stage"] = active
+save_case_state(selected, state)
 
-col1.markdown(render_stage("Stage 1 — Consortium Match Check", s1, active=(active_stage==1)), unsafe_allow_html=True)
-col2.markdown(render_stage("Stage 2 — Risk Attestation", s2, active=(active_stage==2)), unsafe_allow_html=True)
-col3.markdown(render_stage("Stage 3 — Controlled Network View", s3, active=(active_stage==3)), unsafe_allow_html=True)
+tracker_col1.markdown(render_stage_label("Stage 1 — Consortium Match Check", s1, active=(active==1)), unsafe_allow_html=True)
+tracker_col2.markdown(render_stage_label("Stage 2 — Risk Attestation", s2, active=(active==2)), unsafe_allow_html=True)
+tracker_col3.markdown(render_stage_label("Stage 3 — Controlled Network View", s3, active=(active==3)), unsafe_allow_html=True)
 
 st.markdown("---")
 
-# --- Stage cards (compact) ---
-card1, card2, card3 = st.columns(3)
-
-# Stage 1 card
-with card1:
+# --- Main content: show only active stage panel ---
+def show_stage1():
     st.subheader("Stage 1 — Consortium Match Check")
     st.write("Check whether this entity appears across the consortium.")
     st.info("Institution identities are not disclosed. Only the match count is returned.")
@@ -169,25 +156,29 @@ with card1:
         st.write(f"- Match count: **{matching}**")
         if state["stage1_pass"]:
             st.success("Match confirmed — escalation available.")
+            st.button("Continue to risk attestation", key="to_stage2", on_click=lambda: goto_stage(2))
         else:
-            st.warning("No sufficient matches — escalation blocked.")
-    run1 = st.button("Run match check", disabled=False)
-    if run1:
-        # simulate processing
-        with st.spinner("Checking consortium matches..."):
-            time.sleep(0.6)
-        passed = matching >= 1  # threshold
-        new_state = get_case_state(selected)
-        new_state.update({"stage1_run": True, "stage1_pass": passed, "stage2_run": False, "stage2_pass": False, "stage3_viewed": False})
-        save_case_state(selected, new_state)
-        st.rerun()
+            st.error("No sufficient matches — escalation blocked.")
+    else:
+        if st.button("Run match check"):
+            with st.spinner("Checking consortium matches..."):
+                time.sleep(0.6)
+            passed = matching >= 1
+            new_state = get_case_state(selected)
+            new_state.update({"stage1_run": True, "stage1_pass": passed, "stage2_run": False, "stage2_pass": False, "stage3_viewed": False})
+            # keep user on stage 1 after run; they can continue if passed
+            new_state["active_stage"] = 1
+            save_case_state(selected, new_state)
+            st.rerun()
 
-# Stage 2 card
-with card2:
+def show_stage2():
     st.subheader("Stage 2 — Risk Attestation")
     st.write("Verify whether anonymous consortium risk signals exist for this entity.")
     st.info("Risk signals are aggregated and source institutions remain hidden.")
     locked2 = not (state["stage1_run"] and state["stage1_pass"])
+    if locked2:
+        st.warning("Risk attestation is locked until consortium match is confirmed.")
+        return
     if state["stage2_run"]:
         confirmations = entity["anonymous_confirmations"]
         risk = entity["aggregate_risk"]
@@ -195,42 +186,66 @@ with card2:
         st.write(f"- Aggregate risk: **{risk}**")
         if state["stage2_pass"]:
             st.success("Attestation verified — high-risk confirmed.")
+            st.button("Continue to controlled network view", key="to_stage3", on_click=lambda: goto_stage(3))
         else:
-            st.warning("Attestation received but risk not high enough.")
-    run2 = st.button("Verify risk attestation", disabled=locked2)
-    if run2:
-        with st.spinner("Verifying attestation..."):
-            time.sleep(0.6)
-        confirmations = entity["anonymous_confirmations"]
-        risk = entity["aggregate_risk"]
-        passed2 = (confirmations >= 1) and (risk in ["High", "Critical"])
-        new_state = get_case_state(selected)
-        new_state.update({"stage2_run": True, "stage2_pass": passed2})
-        new_state["stage3_viewed"] = False
-        save_case_state(selected, new_state)
-        st.rerun()
+            st.error("Attestation received but risk not high enough — escalation stopped.")
+    else:
+        if st.button("Verify risk attestation"):
+            with st.spinner("Verifying attestation..."):
+                time.sleep(0.6)
+            confirmations = entity["anonymous_confirmations"]
+            risk = entity["aggregate_risk"]
+            passed2 = (confirmations >= 1) and (risk in ["High", "Critical"])
+            new_state = get_case_state(selected)
+            new_state.update({"stage2_run": True, "stage2_pass": passed2})
+            new_state["active_stage"] = 2
+            new_state["stage3_viewed"] = False
+            save_case_state(selected, new_state)
+            st.rerun()
 
-# Stage 3 card
-with card3:
+def show_stage3():
     st.subheader("Stage 3 — Controlled Network View")
     st.write("Review approved cross-institutional network indicators.")
     st.info("Network details are available only after prior-stage approval.")
     locked3 = not (state["stage1_run"] and state["stage1_pass"] and state["stage2_run"] and state["stage2_pass"])
-    if state.get("stage3_viewed", False) and not locked3:
+    if locked3:
+        st.warning("Controlled network view is locked until prior stages complete.")
+        return
+    if state.get("stage3_viewed", False):
         st.success("Controlled network view opened.")
         df = pd.DataFrame(entity["transactions"])
         st.dataframe(df)
-    run3 = st.button("Open controlled network view", disabled=locked3)
-    if run3:
-        new_state = get_case_state(selected)
-        new_state["stage3_viewed"] = True
-        save_case_state(selected, new_state)
-        st.rerun()
+    else:
+        if st.button("Open controlled network view"):
+            new_state = get_case_state(selected)
+            new_state["stage3_viewed"] = True
+            new_state["active_stage"] = 3
+            save_case_state(selected, new_state)
+            st.rerun()
+
+def goto_stage(n):
+    new_state = get_case_state(selected)
+    # Only allow moving forward to available stages
+    if n == 2 and (new_state["stage1_run"] and new_state["stage1_pass"]):
+        new_state["active_stage"] = 2
+    if n == 3 and (new_state["stage2_run"] and new_state["stage2_pass"]):
+        new_state["active_stage"] = 3
+    save_case_state(selected, new_state)
+    st.rerun()
+
+# show the active stage panel
+active = get_case_state(selected).get("active_stage", 1)
+if active == 1:
+    show_stage1()
+elif active == 2:
+    show_stage2()
+elif active == 3:
+    show_stage3()
 
 st.markdown("---")
 
-# --- Result summary (compact workspace) ---
-left, right = st.columns(2)
+# --- Compact status and case details ---
+left, right = st.columns([1,1])
 with left:
     st.markdown("### Workflow status")
     st.write(f"- Stage 1: **{s1.capitalize()}**")
